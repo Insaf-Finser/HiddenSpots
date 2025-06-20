@@ -15,8 +15,9 @@ const spotSchema = new mongoose.Schema({
   longitude: Number,
   type: String,
   image: String,
-  rating: { type: Number, default: 0 },
+  averageRating: { type: Number, default: 0 },
   ratingCount: { type: Number, default: 0 },
+  ratings: [{ userId: String, value: Number }],
   comments: [{
     text: String,
     user: String,

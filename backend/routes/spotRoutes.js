@@ -12,26 +12,38 @@ router.post('/', upload.single('image'), async (req, res) => {
       latitude,
       longitude,
       type,
-      rating
+      image: imageUrlFromBody,
+      gallery = [],
+      comments = [],
+      stories = [],
+      ratings = []
     } = req.body;
 
-    const imageUrl = req.file?.path;
+    const image = req.file?.path || imageUrlFromBody;
 
-    if (!title || !description || !latitude || !longitude || !type || !rating || !imageUrl) {
-      return res.status(400).json({ error: 'All fields are required.' });
+    // Only check required fields
+    if (!title || !description || !latitude || !longitude || !type || !image) {
+      return res.status(400).json({ error: 'All required fields: title, description, latitude, longitude, type, image.' });
     }
 
-    const newSpot = new Spot({
+    const ratingCount = ratings.length;
+    const averageRating = ratingCount ? ratings.reduce((sum, r) => sum + Number(r.value), 0) / ratingCount : 0;
+
+    const newSpot = await Spot.create({
       title,
       description,
       latitude: parseFloat(latitude),
       longitude: parseFloat(longitude),
       type,
-      rating: parseFloat(rating),
-      image: imageUrl
+      image,
+      gallery,
+      comments,
+      stories,
+      ratings,
+      averageRating,
+      ratingCount
     });
 
-    await newSpot.save();
     res.status(201).json(newSpot);
   } catch (error) {
     console.error('Create Spot Error:', error.message);
@@ -76,17 +88,28 @@ router.post('/:id/comment', async (req, res) => {
 
 //post rating
 router.post('/:id/rating', async (req, res) => {
-  const { rating } = req.body;
+  const { userId, value } = req.body;
+  if (!userId || typeof value !== 'number') {
+    return res.status(400).json({ error: 'userId and value are required' });
+  }
   try {
     const spot = await Spot.findById(req.params.id);
     if (!spot) return res.status(404).json({ error: 'Spot not found' });
 
-    // Update rating and rating count
-    spot.ratingCount += 1;
-    spot.rating = ((spot.rating * (spot.ratingCount - 1)) + parseFloat(rating)) / spot.ratingCount;
+    // Find if user has already rated
+    const existingRating = spot.ratings.find(r => r.userId === userId);
+    if (existingRating) {
+      existingRating.value = value;
+    } else {
+      spot.ratings.push({ userId, value });
+    }
+
+    // Recalculate averageRating and ratingCount
+    spot.ratingCount = spot.ratings.length;
+    spot.averageRating = spot.ratings.reduce((sum, r) => sum + r.value, 0) / (spot.ratingCount || 1);
 
     await spot.save();
-    res.json({ rating: spot.rating, ratingCount: spot.ratingCount });
+    res.json({ averageRating: spot.averageRating, ratingCount: spot.ratingCount, userRating: value });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update rating' });
   }
@@ -95,9 +118,14 @@ router.post('/:id/rating', async (req, res) => {
 //rating endpoint
 router.get('/:id/rating', async (req, res) => {
   try {
-    const spot = await Spot.findById(req.params.id).select('rating ratingCount');
+    const spot = await Spot.findById(req.params.id).select('averageRating ratingCount ratings');
     if (!spot) return res.status(404).json({ error: 'Spot not found' });
-    res.json({ rating: spot.rating, ratingCount: spot.ratingCount });
+    let userRating = null;
+    if (req.query.userId) {
+      const found = spot.ratings.find(r => r.userId === req.query.userId);
+      userRating = found ? found.value : null;
+    }
+    res.json({ averageRating: spot.averageRating, ratingCount: spot.ratingCount, userRating });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch rating' });
   }
@@ -189,31 +217,26 @@ router.put('/:id', upload.fields([
     const spot = await Spot.findById(req.params.id);
     if (!spot) return res.status(404).json({ error: 'Spot not found' });
 
-    // Update basic fields
-    spot.title = req.body.title || spot.title;
-    spot.description = req.body.description || spot.description;
-    spot.type = req.body.type || spot.type;
-    spot.latitude = req.body.latitude ? parseFloat(req.body.latitude) : spot.latitude;
-    spot.longitude = req.body.longitude ? parseFloat(req.body.longitude) : spot.longitude;
-    spot.rating = req.body.rating ? parseFloat(req.body.rating) : spot.rating;
+    // Only update required fields if provided
+    if (req.body.title) spot.title = req.body.title;
+    if (req.body.description) spot.description = req.body.description;
+    if (req.body.type) spot.type = req.body.type;
+    if (req.body.latitude) spot.latitude = parseFloat(req.body.latitude);
+    if (req.body.longitude) spot.longitude = parseFloat(req.body.longitude);
 
-    // Update main image
+    // Update main image (file or URL)
     if (req.files && req.files.image && req.files.image[0]) {
       spot.image = req.files.image[0].path;
     } else if (req.body.image && typeof req.body.image === 'string') {
       spot.image = req.body.image;
     }
 
-    // Handle gallery: accept both URLs and uploaded files
-    let galleryArr = [];
-
-    // Add uploaded gallery images (files)
-    if (req.files && req.files.gallery) {
-      galleryArr = req.files.gallery.map(file => file.path);
-    }
-
-    // Add gallery URLs from body (can be string or array)
+    // Optional fields
     if (req.body.gallery) {
+      let galleryArr = [];
+      if (req.files && req.files.gallery) {
+        galleryArr = req.files.gallery.map(file => file.path);
+      }
       let urls = [];
       if (Array.isArray(req.body.gallery)) {
         urls = req.body.gallery;
@@ -221,13 +244,16 @@ router.put('/:id', upload.fields([
         urls = [req.body.gallery];
       }
       galleryArr = galleryArr.concat(urls.filter(url => typeof url === 'string' && url.trim() !== ''));
+      galleryArr = galleryArr.filter(Boolean);
+      spot.gallery = galleryArr;
     }
-
-    // Remove empty strings (can happen if a field is left blank)
-    galleryArr = galleryArr.filter(Boolean);
-
-    // Replace gallery with new array (removes deleted images)
-    spot.gallery = galleryArr;
+    if (req.body.comments) spot.comments = req.body.comments;
+    if (req.body.stories) spot.stories = req.body.stories;
+    if (req.body.ratings) {
+      spot.ratings = req.body.ratings;
+      spot.ratingCount = spot.ratings.length;
+      spot.averageRating = spot.ratingCount ? spot.ratings.reduce((sum, r) => sum + Number(r.value), 0) / spot.ratingCount : 0;
+    }
 
     await spot.save();
     res.json(spot);
@@ -235,12 +261,6 @@ router.put('/:id', upload.fields([
     console.error('Update Spot Error:', error.message);
     res.status(500).json({ error: 'Failed to update spot' });
   }
-  
-  // Updated and more robust rating endpoint
-
-
 });
-
- 
 
 module.exports = router;

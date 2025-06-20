@@ -24,6 +24,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import moment from 'moment';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -75,6 +76,21 @@ const SpotDetails: React.FC = () => {
     const [currentImageIndex, setCurrentImageIndex] = useState(0);
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const imageOpacity = useRef(new Animated.Value(0)).current;
+    const [averageRating, setAverageRating] = useState<number | null>(null);
+    const [ratingCount, setRatingCount] = useState<number | null>(null);
+    const [userId, setUserId] = useState<string | null>(null);
+    const [ratingLoading, setRatingLoading] = useState(false);
+    const [ratingError, setRatingError] = useState<string | null>(null);
+
+    const getUserId = async () => {
+        let id = await AsyncStorage.getItem('userId');
+        if (!id) {
+            id = Math.random().toString(36).substr(2, 9) + Date.now();
+            await AsyncStorage.setItem('userId', id);
+        }
+        setUserId(id);
+        return id;
+    };
 
     const fetchSpot = async (id: string) => {
         try {
@@ -86,12 +102,13 @@ const SpotDetails: React.FC = () => {
             setRefreshing(true);
             const response = await axios.get(`${API_URL}/${id}`);
             const spotData = response.data;
-
-            console.log('Fetched spot data:', spotData);
-
-            if (!spotData) throw new Error('Spot not found');
-
             setSpot(spotData);
+            const uid = await getUserId();
+            const ratingRes = await axios.get(`${API_URL}/${id}/rating?userId=${uid}`);
+            setAverageRating(ratingRes.data.averageRating);
+            setRatingCount(ratingRes.data.ratingCount);
+            setUserRating(ratingRes.data.userRating || 0);
+            setRatingError(null);
 
             // Image load animation
             Animated.timing(imageOpacity, {
@@ -109,6 +126,7 @@ const SpotDetails: React.FC = () => {
             }).start();
 
         } catch (error) {
+            setRatingError('Failed to load ratings');
             console.error(error);
         } finally {
             setLoading(false);
@@ -164,21 +182,22 @@ const SpotDetails: React.FC = () => {
     };
 
     const handleRateSpot = async (rating: number) => {
-        if (!spot) return;
-        
+        if (!spot || !userId) return;
+        setRatingLoading(true);
+        setRatingError(null);
         try {
             setUserRating(rating);
-            const response = await axios.post(`${API_URL}/${spot._id}/rating`, { rating });
-            
+            const response = await axios.post(`${API_URL}/${spot._id}/rating`, { userId, value: rating });
             if (response.data) {
-                setSpot(prev => ({
-                    ...prev!,
-                    rating: response.data.newRating,
-                    ratingCount: response.data.ratingCount
-                }));
+                setAverageRating(response.data.averageRating);
+                setRatingCount(response.data.ratingCount);
+                setUserRating(response.data.userRating);
             }
         } catch (error) {
+            setRatingError('Failed to submit rating');
             console.error('Error rating spot:', error);
+        } finally {
+            setRatingLoading(false);
         }
     };
 
@@ -251,17 +270,21 @@ const SpotDetails: React.FC = () => {
         const stars = [];
         for (let i = 1; i <= 5; i++) {
             stars.push(
-                <TouchableOpacity key={`star-${i}`} onPress={() => handleRateSpot(i)}>
-                    <Ionicons 
-                        name={i <= userRating ? 'star' : 'star-outline'} 
-                        size={32} 
-                        color={i <= userRating ? '#FFD700' : '#ccc'} 
-                        style={styles.starIcon}
+                <TouchableOpacity
+                    key={i}
+                    onPress={() => handleRateSpot(i)}
+                    disabled={ratingLoading}
+                >
+                    <FontAwesome
+                        name={i <= userRating ? 'star' : 'star-o'}
+                        size={28}
+                        color={i <= userRating ? '#FFD700' : '#ccc'}
+                        style={{ marginHorizontal: 2 }}
                     />
                 </TouchableOpacity>
             );
         }
-        return stars;
+        return <View style={{ flexDirection: 'row', alignItems: 'center' }}>{stars}</View>;
     };
 
     if (loading) {
@@ -491,6 +514,16 @@ const SpotDetails: React.FC = () => {
                             Last updated: {moment(spot.updatedAt).format('MMM D, YYYY')}
                         </Text>
                     )}
+                </View>
+
+                <View style={{ marginVertical: 10 }}>
+                    <Text style={{ fontWeight: 'bold' }}>Your Rating:</Text>
+                    {renderRatingStars()}
+                    {ratingLoading && <ActivityIndicator size="small" color="#FFD700" />}
+                    {ratingError && <Text style={{ color: 'red' }}>{ratingError}</Text>}
+                    <Text style={{ marginTop: 5 }}>
+                        Average Rating: {averageRating ? averageRating.toFixed(1) : 'N/A'} ({ratingCount || 0} ratings)
+                    </Text>
                 </View>
             </Animated.View>
 

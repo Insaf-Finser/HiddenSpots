@@ -17,15 +17,24 @@ exports.createSpot = async (req, res) => {
       latitude,
       longitude,
       type,
-      rating,
+      image: imageUrlFromBody,
+      gallery = [],
+      comments = [],
+      stories = [],
+      ratings = []
     } = req.body;
 
-    const image = req.file?.path;
+    // Accept image from file upload or URL
+    const image = req.file?.path || imageUrlFromBody;
 
-    // Basic input validation
-    if (!title || !description || !latitude || !longitude || !type || !rating || !image) {
-      return res.status(400).json({ error: 'All fields are required.' });
+    // Only check required fields
+    if (!title || !description || !latitude || !longitude || !type || !image) {
+      return res.status(400).json({ error: 'All required fields: title, description, latitude, longitude, type, image.' });
     }
+
+    // Calculate averageRating and ratingCount from ratings array
+    const ratingCount = ratings.length;
+    const averageRating = ratingCount ? ratings.reduce((sum, r) => sum + Number(r.value), 0) / ratingCount : 0;
 
     const newSpot = await Spot.create({
       title,
@@ -33,8 +42,13 @@ exports.createSpot = async (req, res) => {
       latitude: parseFloat(latitude),
       longitude: parseFloat(longitude),
       type,
-      rating: parseFloat(rating),
-      image
+      image,
+      gallery,
+      comments,
+      stories,
+      ratings,
+      averageRating,
+      ratingCount
     });
 
     res.status(201).json(newSpot);
