@@ -7,11 +7,17 @@ import {
   StyleSheet, 
   TouchableOpacity,
   Image,
-  Alert
+  Alert,
+  Animated
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Colors } from '@/constants/Colors';
+import { useColorScheme } from '@/hooks/useColorScheme';
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const API_URL = 'http://192.168.1.240:5000/api/spots';
 
@@ -30,11 +36,58 @@ type RootStackParamList = {
     // Add other routes if needed
 };
 
+const pastelGradient = ['#e0eafc', '#cfdef3']; // soft blue to lavender
+const pastelFAB = '#b3c6f7'; // pastel blue
+
+function BookmarkCard({ spot, theme, onRemove }: { spot: Spot, theme: any, onRemove: (id: string) => void }) {
+  const fadeAnim = React.useRef(new Animated.Value(0)).current;
+  React.useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 600,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+  return (
+    <Animated.View style={{ opacity: fadeAnim, marginBottom: 28 }}>
+      <View style={{
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderRadius: 24,
+        padding: 20,
+        shadowColor: '#b3c6f7',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 16,
+        elevation: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+      }}>
+        <Image source={spot.image ? { uri: spot.image } : require('@/assets/images/map-pin.png')} style={{ width: 72, height: 72, borderRadius: 16, marginRight: 18, backgroundColor: '#e0eafc' }} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 20, fontWeight: '500', color: theme.text, lineHeight: 28, marginBottom: 4 }}>{spot.name}</Text>
+          <Text style={{ color: theme.icon, fontSize: 15, lineHeight: 22, marginBottom: 8 }}>{spot.description}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="star" size={16} color={theme.accent} />
+            <Text style={{ color: theme.accent, fontWeight: '500', marginLeft: 4, marginRight: 12 }}>{spot.rating}</Text>
+            <Text style={{ color: '#b3c6f7', fontSize: 13, textTransform: 'capitalize' }}>{spot.type}</Text>
+          </View>
+        </View>
+        <TouchableOpacity onPress={() => onRemove(spot.id)} style={{ marginLeft: 12 }}>
+          <Ionicons name="trash-outline" size={22} color={theme.accent2} />
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
+  );
+}
+
 const BookmarkPage = () => {
     const [spots, setSpots] = useState<Spot[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const navigation = useNavigation<import('@react-navigation/native').NavigationProp<RootStackParamList>>();
+    const colorScheme = useColorScheme();
+    const theme = Colors[colorScheme ?? 'light'];
+    const insets = useSafeAreaInsets();
 
     // Debugging function to log storage contents
     const debugStorage = async () => {
@@ -165,83 +218,145 @@ const BookmarkPage = () => {
 
     if (loading) {
         return (
-            <View style={styles.center}>
-                <ActivityIndicator size="large" color="#6E45E2" />
+            <View style={{ flex: 1, backgroundColor: pastelGradient[0] }}>
+                <LinearGradient colors={pastelGradient as any} style={{ paddingBottom: 32, borderBottomLeftRadius: 32, borderBottomRightRadius: 32 }}>
+                    <Text style={{
+                        fontSize: 32,
+                        fontWeight: '600',
+                        color: theme.text,
+                        paddingTop: 48,
+                        paddingBottom: 16,
+                        paddingHorizontal: 28,
+                        letterSpacing: 0.5,
+                        lineHeight: 38,
+                    }}>
+                        Bookmarked Spots
+                    </Text>
+                </LinearGradient>
+                <ActivityIndicator size="large" color={pastelFAB} style={{ marginTop: 40 }} />
             </View>
         );
     }
 
     if (spots.length === 0) {
         return (
-            <View style={styles.emptyContainer}>
-                <Ionicons name="bookmark-outline" size={64} color="#ccc" />
-                <Text style={styles.emptyText}>No bookmarked spots yet</Text>
-                <Text style={styles.emptySubtext}>Save your favorite spots to see them here</Text>
+            <View style={{ flex: 1, backgroundColor: pastelGradient[0] }}>
+                <LinearGradient colors={pastelGradient as any} style={{ paddingBottom: 32, borderBottomLeftRadius: 32, borderBottomRightRadius: 32 }}>
+                    <Text style={{
+                        fontSize: 32,
+                        fontWeight: '600',
+                        color: theme.text,
+                        paddingTop: 48,
+                        paddingBottom: 16,
+                        paddingHorizontal: 28,
+                        letterSpacing: 0.5,
+                        lineHeight: 38,
+                    }}>
+                        Bookmarked Spots
+                    </Text>
+                </LinearGradient>
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 40 }}>
+                    <Ionicons name="bookmark-outline" size={64} color={theme.accent2} />
+                    <Text style={{ fontSize: 18, color: theme.text, marginTop: 16 }}>No bookmarked spots yet</Text>
+                    <Text style={{ fontSize: 14, color: theme.icon, marginTop: 8, textAlign: 'center', maxWidth: 300 }}>Save your favorite spots to see them here</Text>
+                </View>
             </View>
         );
     }
 
     return (
-        <FlatList
-            data={spots}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-                <TouchableOpacity
-                    style={styles.card}
-                    activeOpacity={0.85}
-                    onPress={() => {
-                        navigation.navigate('SpotDetails', { spotId: item.id });
-                    }}
-                >
-                    {item.image ? (
-                        <Image 
-                            source={{ uri: item.image }} 
-                            style={styles.cardImage}
-                            resizeMode="cover"
-                        />
-                    ) : (
-                        <View style={[styles.cardImage, styles.noImage]}>
-                            <Ionicons name="image-outline" size={48} color="#ccc" />
-                        </View>
-                    )}
-                    
-                    <View style={styles.cardContent}>
-                        <View style={styles.cardHeader}>
-                            <Text style={styles.cardTitle} numberOfLines={1}>
-                                {item.name}
-                            </Text>
-                            <TouchableOpacity 
-                                onPress={() => handleRemoveBookmark(item.id)}
-                                style={styles.bookmarkButton}
-                            >
-                                <Ionicons name="bookmark" size={24} color="#6E45E2" />
-                            </TouchableOpacity>
-                        </View>
-                        
-                        {item.type && (
-                            <View style={styles.tagContainer}>
-                                <Text style={styles.tagText}>{item.type}</Text>
+        <View style={{ flex: 1, backgroundColor: pastelGradient[0] }}>
+            {/* Transparent box behind nav bar */}
+            <View style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 80 + insets.bottom,
+                backgroundColor: 'rgba(255,255,255,0.7)',
+                zIndex: 1,
+            }} pointerEvents="none" />
+            <LinearGradient colors={pastelGradient as any} style={{ paddingBottom: 32, borderBottomLeftRadius: 32, borderBottomRightRadius: 32 }}>
+                <Text style={{
+                    fontSize: 32,
+                    fontWeight: '600',
+                    color: theme.text,
+                    paddingTop: 48,
+                    paddingBottom: 16,
+                    paddingHorizontal: 28,
+                    letterSpacing: 0.5,
+                    lineHeight: 38,
+                }}>
+                    Bookmarked Spots
+                </Text>
+            </LinearGradient>
+            <FlatList
+                data={spots}
+                renderItem={({ item }) => (
+                    <TouchableOpacity
+                        style={{ marginHorizontal: 0, marginBottom: 20, alignSelf: 'center', width: '100%' }}
+                        activeOpacity={0.85}
+                        onPress={() => {
+                            navigation.navigate('SpotDetails', { spotId: item.id });
+                        }}
+                    >
+                        <BlurView
+                            intensity={40}
+                            tint={colorScheme === 'dark' ? 'dark' : 'light'}
+                            style={[
+                                styles.card,
+                                {
+                                    width: '96%',
+                                    maxWidth: 420,
+                                    alignSelf: 'center',
+                                    backgroundColor: 'rgba(255,255,255,0.55)',
+                                    borderRadius: 20,
+                                    padding: 0,
+                                    shadowColor: '#b3c6f7',
+                                    shadowOffset: { width: 0, height: 8 },
+                                    shadowOpacity: 0.12,
+                                    shadowRadius: 24,
+                                },
+                            ]}
+                        >
+                            {item.image ? (
+                                <Image
+                                    source={{ uri: item.image }}
+                                    style={styles.cardImage}
+                                    resizeMode="cover"
+                                />
+                            ) : (
+                                <View style={[styles.cardImage, styles.noImage]}>
+                                    <Ionicons name="image-outline" size={48} color="#ccc" />
+                                </View>
+                            )}
+                            <View style={styles.cardContent}>
+                                <View style={styles.cardHeader}>
+                                    <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+                                    <TouchableOpacity onPress={() => handleRemoveBookmark(item.id)} style={styles.bookmarkButton}>
+                                        <Ionicons name="bookmark" size={24} color="#6E45E2" />
+                                    </TouchableOpacity>
+                                </View>
+                                {item.type && (
+                                    <View style={styles.tagContainer}>
+                                        <Text style={styles.tagText}>{item.type}</Text>
+                                    </View>
+                                )}
+                                <Text style={styles.cardDescription} numberOfLines={2}>{item.description}</Text>
+                                {item.rating !== undefined && (
+                                    <View style={styles.ratingContainer}>
+                                        <Ionicons name="star" size={16} color="#FFD700" />
+                                        <Text style={styles.ratingText}>{item.rating.toFixed(1)}</Text>
+                                    </View>
+                                )}
                             </View>
-                        )}
-                        
-                        <Text style={styles.cardDescription} numberOfLines={2}>
-                            {item.description}
-                        </Text>
-                        
-                        {item.rating !== undefined && (
-                            <View style={styles.ratingContainer}>
-                                <Ionicons name="star" size={16} color="#FFD700" />
-                                <Text style={styles.ratingText}>{item.rating.toFixed(1)}</Text>
-                            </View>
-                        )}
-                    </View>
-                </TouchableOpacity>
-            )}
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            contentContainerStyle={styles.listContainer}
-            showsVerticalScrollIndicator={false}
-        />
+                        </BlurView>
+                    </TouchableOpacity>
+                )}
+                keyExtractor={(item, index) => (item.id || index.toString())}
+                contentContainerStyle={{ padding: 24, paddingBottom: 80 + insets.bottom }}
+            />
+        </View>
     );
 };
 

@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 const TAB_BAR_WIDTH = width - 40;
@@ -27,6 +28,8 @@ export default function TabLayout() {
   const [indicatorPos] = useState(new Animated.Value(0));
   const [scaleAnim] = useState(new Animated.Value(1));
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [showFeedBadge, setShowFeedBadge] = useState(false);
+  const [showBookmarkHighlight, setShowBookmarkHighlight] = useState(false);
   const pan = useRef(new Animated.ValueXY()).current;
   const isDark = colorScheme === 'dark';
 
@@ -54,8 +57,8 @@ export default function TabLayout() {
           color={isDark ? (focused ? '#6E45E2' : '#aaa') : (focused ? '#6E45E2' : '#555')}
         />
       ),
-      badge: 3,
-      pulse: true
+      badge: showFeedBadge ? 1 : undefined,
+      pulse: showFeedBadge
     },
     {
       name: "bookmark",
@@ -67,7 +70,7 @@ export default function TabLayout() {
           color={isDark ? (focused ? '#6E45E2' : '#aaa') : (focused ? '#6E45E2' : '#555')}
         />
       ),
-      newIndicator: true
+      newIndicator: showBookmarkHighlight
     },
     {
       name: "myspot",
@@ -165,6 +168,53 @@ export default function TabLayout() {
     ]).start();
   };
 
+  // Check for new spots for Feed badge
+  useEffect(() => {
+    const checkFeedBadge = async () => {
+      try {
+        const lastSeen = await AsyncStorage.getItem('lastSeenFeed');
+        // Fetch latest spot createdAt from backend or local cache (pseudo-code)
+        // Replace with actual fetch if needed
+        const latestCreatedAt = await AsyncStorage.getItem('latestSpotCreatedAt');
+        if (latestCreatedAt && (!lastSeen || new Date(latestCreatedAt) > new Date(lastSeen))) {
+          setShowFeedBadge(true);
+        } else {
+          setShowFeedBadge(false);
+        }
+      } catch {}
+    };
+    checkFeedBadge();
+  }, [activeTab]);
+
+  // When user visits Feed tab, clear badge
+  useEffect(() => {
+    if (activeTab === 'Feed') {
+      AsyncStorage.setItem('lastSeenFeed', new Date().toISOString());
+      setShowFeedBadge(false);
+    }
+  }, [activeTab]);
+
+  // Listen for new bookmarks for bookmark highlight
+  useEffect(() => {
+    const checkBookmarkHighlight = async () => {
+      try {
+        const lastSeen = await AsyncStorage.getItem('lastSeenBookmark');
+        const newBookmark = await AsyncStorage.getItem('newBookmarkAdded');
+        setShowBookmarkHighlight(!!newBookmark && (!lastSeen || new Date(newBookmark) > new Date(lastSeen)));
+      } catch {}
+    };
+    checkBookmarkHighlight();
+  }, [activeTab]);
+
+  // When user visits bookmark tab, clear highlight
+  useEffect(() => {
+    if (activeTab === 'bookmark') {
+      AsyncStorage.setItem('lastSeenBookmark', new Date().toISOString());
+      AsyncStorage.removeItem('newBookmarkAdded');
+      setShowBookmarkHighlight(false);
+    }
+  }, [activeTab]);
+
   const renderTabBar = ({ state, navigation }: any) => {
     return (
       <View style={styles.tabBarContainer}>
@@ -176,10 +226,7 @@ export default function TabLayout() {
             { backgroundColor: isDark ? 'rgba(30,30,30,0.7)' : 'rgba(255,255,255,0.7)' }
           ]}
         >
-          <LinearGradient
-            colors={isDark ? ['#6E45E2', '#88D3CE'] : ['#6E45E2', '#88D3CE']}
-            start={[0, 0]}
-            end={[1, 0]}
+          <Animated.View
             style={[
               styles.activeIndicator,
               { 
@@ -187,7 +234,14 @@ export default function TabLayout() {
                 width: TAB_WIDTH - 20 
               }
             ]}
-          />
+          >
+            <LinearGradient
+              colors={isDark ? ['#6E45E2', '#88D3CE'] : ['#6E45E2', '#88D3CE']}
+              start={[0, 0]}
+              end={[1, 0]}
+              style={{ flex: 1, height: '100%', borderRadius: 3 }}
+            />
+          </Animated.View>
           
           {state.routes.map((route: any, index: number) => {
             const tab = tabs[index];
@@ -298,9 +352,9 @@ const styles = StyleSheet.create({
   },
   activeIndicator: {
     position: 'absolute',
-    height: 3,
+    height: 0,
     bottom: 10,
-    left: 10,
+    left: 20,
     borderRadius: 3,
   },
   tabButton: {

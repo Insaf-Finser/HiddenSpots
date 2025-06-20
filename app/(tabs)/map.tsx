@@ -27,6 +27,7 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import SpotDetail from '@/src/components/SpotDetail';
 import * as Location from 'expo-location';
 import Slider from '@react-native-community/slider';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Story {
     _id: string;
@@ -128,6 +129,8 @@ const HomeScreen = () => {
     newestFirst: false,
   });
   const [showSearchFilters, setShowSearchFilters] = useState(false);
+
+  const insets = useSafeAreaInsets();
 
   const getDistance = (loc1: {latitude: number, longitude: number}, loc2: {latitude: number, longitude: number}) => {
     const R = 6371;
@@ -589,6 +592,16 @@ const HomeScreen = () => {
 
   return (
     <View style={styles.container}>
+      {/* Transparent box behind nav bar */}
+      <View style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 70 + insets.bottom,
+        backgroundColor: 'rgba(255,255,255,0.7)',
+        zIndex: 1,
+      }} pointerEvents="none" />
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -766,7 +779,7 @@ const HomeScreen = () => {
         </Animated.View>
       )}
 
-      <View style={styles.zoomControls}>
+      <View style={[styles.zoomControls, { bottom: height * 0.31 }]}>
         <TouchableOpacity 
           style={styles.zoomButton}
           onPress={zoomIn}
@@ -785,7 +798,7 @@ const HomeScreen = () => {
       </View>
 
       {fabVisible && (
-        <View style={styles.fabContainer} pointerEvents="box-none">
+        <View style={[styles.fabContainer, { bottom: 100 }]} pointerEvents="box-none">
           <Animated.View
             style={[
               styles.filterPanel,
@@ -793,6 +806,7 @@ const HomeScreen = () => {
                 opacity: filterOpacity,
                 transform: [{ scaleY: filterHeight }],
                 pointerEvents: showFilter ? 'auto' : 'none',
+                bottom: 180,
               },
             ]}
             pointerEvents={showFilter ? 'auto' : 'none'}
@@ -842,7 +856,7 @@ const HomeScreen = () => {
           </Animated.View>
 
           <TouchableOpacity 
-            style={styles.fab}
+            style={[styles.fab, { bottom: 100 }]}
             onPress={toggleFilter}
             onPressIn={() => setIgnoreMapPress(true)}
             onPressOut={() => setTimeout(() => setIgnoreMapPress(false), 300)}
@@ -863,6 +877,7 @@ const HomeScreen = () => {
             {
               height: sheetHeight,
               transform: [{ translateY }],
+              marginBottom: 70+insets.bottom,
             },
           ]}
           {...panResponder.panHandlers}
@@ -1104,14 +1119,14 @@ const styles = StyleSheet.create({
   fabContainer: {
     position: 'absolute',
     right: 20,
-    bottom: 20,
+    bottom: 100,
     alignItems: 'flex-end',
     zIndex: 10,
   },
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 20,
+    bottom: 100,
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -1127,7 +1142,7 @@ const styles = StyleSheet.create({
   filterPanel: {
     position: 'absolute',
     right: 10,
-    bottom: 90,
+    bottom: 20,
     width: 180,
     backgroundColor: '#f7f7f7',
     borderRadius: 15,

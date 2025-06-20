@@ -23,6 +23,7 @@ import axios from 'axios';
 import * as ImagePicker from 'expo-image-picker';
 import RNPickerSelect from 'react-native-picker-select';
 import MapView, { Marker } from 'react-native-maps';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const API_URL = 'http://192.168.1.240:5000/api/spots';
 
@@ -72,6 +73,7 @@ const MySpotScreen = () => {
   const [editingStory, setEditingStory] = useState<Story | null>(null);
   const [storyModalVisible, setStoryModalVisible] = useState(false);
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   const getMySpotIds = async (): Promise<string[]> => {
     try {
@@ -393,7 +395,7 @@ const MySpotScreen = () => {
         <Text style={styles.emptyText}>No spots added yet</Text>
         <Text style={styles.emptySubtext}>Add your hidden spots to see them here</Text>
         <TouchableOpacity
-          style={styles.addButton}
+          style={[styles.addButton, { marginBottom: insets.bottom + 16 }]}
           onPress={() => navigation.navigate('savespot' as never)}
         >
           <Text style={styles.addButtonText}>＋ Add Spot</Text>
@@ -404,6 +406,16 @@ const MySpotScreen = () => {
 
   return (
     <View style={styles.container}>
+      {/* Transparent box behind nav bar */}
+      <View style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 80 + insets.bottom,
+        backgroundColor: 'rgba(255,255,255,0.7)',
+        zIndex: 1,
+      }} pointerEvents="none" />
       <FlatList
         data={spots}
         keyExtractor={(item) => item._id}
@@ -511,7 +523,7 @@ const MySpotScreen = () => {
         )}
         refreshing={refreshing}
         onRefresh={handleRefresh}
-        contentContainerStyle={styles.listContainer}
+        contentContainerStyle={[styles.listContainer, { paddingBottom: 40 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <View style={styles.header}>
