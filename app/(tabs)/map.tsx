@@ -13,7 +13,10 @@ import {
   Platform,
   ScrollView,
   Clipboard,
-  Linking
+  Linking,
+  TextInput,
+  Keyboard,
+  Switch
 } from 'react-native';
 import MapView, { Marker, MapPressEvent } from 'react-native-maps';
 import { MaterialIcons, FontAwesome, Ionicons } from '@expo/vector-icons';
@@ -23,6 +26,7 @@ import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import SpotDetail from '@/src/components/SpotDetail';
 import * as Location from 'expo-location';
+import Slider from '@react-native-community/slider';
 
 interface Story {
     _id: string;
@@ -48,35 +52,32 @@ interface HiddenSpot {
     latitude: number;
     longitude: number;
   };
-  type: 'lake' | 'cafe' | 'art' | 'nature'; // Use 'nature' if that's what your backend returns
+  type: 'lake' | 'cafe' | 'art' | 'nature';
   image: string | any;
   rating: number;
   ratingCount?: number;
-    gallery?: string[];
-    comments?: Comment[];
-    stories?: Story[];
-    createdAt?: string;
-    updatedAt?: string;
+  gallery?: string[];
+  comments?: Comment[];
+  stories?: Story[];
+  createdAt?: string;
+  updatedAt?: string;
+  featured?: boolean;
 }
 
 const { width, height } = Dimensions.get('window');
-
-// REMOVE the hardcoded hiddenSpots array
 
 function getMarkerIcon(type: HiddenSpot['type']): keyof typeof MaterialIcons.glyphMap {
   switch (type) {
     case 'lake': return 'waves';
     case 'cafe': return 'local-cafe';
     case 'art': return 'palette';
-    case 'nature': return 'park'; // Use 'nature' if that's your backend type
+    case 'nature': return 'park';
     default: return 'place';
   }
 }
 
-// Define your navigation types (add this above your component)
 type RootStackParamList = {
   savespot: { coordinate: { latitude: number; longitude: number } };
-  // ... other screen definitions
 };
 
 const HomeScreen = () => {
@@ -86,9 +87,7 @@ const HomeScreen = () => {
   const [showDetail, setShowDetail] = useState(false);
   const animatedValue = useRef(new Animated.Value(0)).current;
   const panY = useRef(new Animated.Value(0)).current;
-  // Add expanded state before using it
   const [expanded, setExpanded] = useState(false);
-  // Sheet height is dynamic: expanded = full screen, else 40%
   const sheetHeight = expanded ? height * 0.9 : height * 0.4;
   const [currentZoom, setCurrentZoom] = useState(0.05);
   const [showFilter, setShowFilter] = useState(false);
@@ -96,7 +95,7 @@ const HomeScreen = () => {
     lake: true,
     cafe: true,
     art: true,
-    nature: true // Use 'nature' if that's your backend type
+    nature: true
   });
   const [fabVisible, setFabVisible] = useState(true);
   const [ignoreMapPress, setIgnoreMapPress] = useState(false);
@@ -105,37 +104,129 @@ const HomeScreen = () => {
     longitude: number;
   } | null>(null);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [showRecentSearches, setShowRecentSearches] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
 
   const filterPressTimer = useRef<NodeJS.Timeout | number | null>(null);
-
   const filterAnim = useRef(new Animated.Value(0)).current;
+  const searchAnim = useRef(new Animated.Value(0)).current;
 
   const filterTranslateY = filterAnim.interpolate({
-  inputRange: [0, 1],
-  outputRange: [20, 0],
-});
+    inputRange: [0, 1],
+    outputRange: [20, 0],
+  });
 
+  const [searchFilters, setSearchFilters] = useState({
+    rating: 0,
+    types: ['lake', 'cafe', 'art', 'nature'],
+    minRatings: 0,
+    hasGallery: false,
+    featured: false,
+    newestFirst: false,
+  });
+  const [showSearchFilters, setShowSearchFilters] = useState(false);
+
+  const getDistance = (loc1: {latitude: number, longitude: number}, loc2: {latitude: number, longitude: number}) => {
+    const R = 6371;
+    const dLat = deg2rad(loc2.latitude - loc1.latitude);
+    const dLon = deg2rad(loc2.longitude - loc1.longitude);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(deg2rad(loc1.latitude)) * Math.cos(deg2rad(loc2.latitude)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c;
+    return distance;
+  };
+
+  const deg2rad = (deg: number) => deg * (Math.PI/180);
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    let results = hiddenSpots
+      .filter(spot =>
+        searchFilters.types.includes(spot.type) &&
+        (query.trim() === '' ||
+          spot.title.toLowerCase().includes(query.toLowerCase()) ||
+          spot.description.toLowerCase().includes(query.toLowerCase()))
+      )
+      .filter(spot => searchFilters.rating > 0 ? spot.rating >= searchFilters.rating : true)
+      .filter(spot => searchFilters.minRatings > 0 ? (spot.ratingCount || 0) >= searchFilters.minRatings : true)
+      .filter(spot => searchFilters.hasGallery ? (spot.gallery && spot.gallery.length > 0) : true)
+      .filter(spot => searchFilters.featured ? spot.featured === true : true)
+      .sort((a, b) => {
+        if (searchFilters.newestFirst) {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        }
+        return 0;
+      });
+    setFilteredSpots(results);
+  };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setFilteredSpots([]);
+    setIsSearchFocused(false);
+    Keyboard.dismiss();
+  };
+
+  const addToRecentSearches = (query: string) => {
+    if (query.trim() === '') return;
+    
+    setRecentSearches(prev => {
+      const newSearches = [query, ...prev.filter(item => item !== query)].slice(0, 5);
+      return newSearches;
+    });
+  };
+
+  const handleSearchFocus = () => {
+    setIsSearchFocused(true);
+    setShowRecentSearches(true);
+    Animated.timing(searchAnim, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleSearchBlur = () => {
+    setTimeout(() => {
+      setIsSearchFocused(false);
+      setShowRecentSearches(false);
+    }, 200);
+  };
+
+  const searchRecentQuery = (query: string) => {
+    setSearchQuery(query);
+    handleSearch(query);
+    searchInputRef.current?.focus();
+  };
 
   const toggleFilter = () => {
-  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  const newShowFilter = !showFilter;
-  setShowFilter(newShowFilter);
-  setIgnoreMapPress(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const newShowFilter = !showFilter;
+    setShowFilter(newShowFilter);
+    setIgnoreMapPress(true);
 
-  if (filterPressTimer.current) {
-    clearTimeout(filterPressTimer.current);
-  }
+    if (filterPressTimer.current) {
+      clearTimeout(filterPressTimer.current);
+    }
 
-  Animated.timing(filterAnim, {
-    toValue: newShowFilter ? 1 : 0,
-    duration: 200,
-    useNativeDriver: true,
-  }).start(() => {
-    filterPressTimer.current = setTimeout(() => {
-      setIgnoreMapPress(false);
-    }, 100);
-  });
-};
+    Animated.timing(filterAnim, {
+      toValue: newShowFilter ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      filterPressTimer.current = setTimeout(() => {
+        setIgnoreMapPress(false);
+      }, 100);
+    });
+  };
 
   const toggleType = (type: keyof typeof filterTypes) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -159,25 +250,20 @@ const HomeScreen = () => {
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only respond to vertical gestures
         return Math.abs(gestureState.dy) > Math.abs(gestureState.dx * 2);
       },
       onPanResponderGrant: () => {
-        // Reset any existing animations when gesture starts
         panY.setValue(0);
       },
       onPanResponderMove: (_, gestureState) => {
-        // Only allow downward movement (closing)
         if (gestureState.dy > 0) {
           panY.setValue(gestureState.dy);
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        // Close if dragged down significantly or with enough velocity
         if (gestureState.dy > sheetHeight * 0.25 || gestureState.vy > 0.5) {
           closeDetail();
         } else {
-          // Return to open position with spring animation
           Animated.spring(panY, {
             toValue: 0,
             useNativeDriver: true,
@@ -218,9 +304,9 @@ const HomeScreen = () => {
     setSelectedSpot(spot);
     setCurrentCoordinate(spot.coordinate);
     setFabVisible(false);
-    setExpanded(false); // Reset expanded state when new spot is selected
+    setExpanded(false);
+    clearSearch();
 
-    // Start both animations together
     Animated.parallel([
       Animated.spring(animatedValue, {
         toValue: 1,
@@ -261,7 +347,6 @@ const HomeScreen = () => {
     });
   };
 
-  // Improved translateY calculation
   const translateY = panY.interpolate({
     inputRange: [0, height],
     outputRange: [0, height],
@@ -278,7 +363,7 @@ const HomeScreen = () => {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const coordinate = e.nativeEvent.coordinate;
-    setCurrentCoordinate(coordinate); // <-- update here
+    setCurrentCoordinate(coordinate);
 
     setSelectedSpot({
       id: `temp-${Date.now()}`,
@@ -306,35 +391,32 @@ const HomeScreen = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
-  // Fetch data from backend
   const fetchSpots = async (region?: {latitude: number, longitude: number}) => {
-  try {
-    const response = await axios.get('http://192.168.1.240:5000/api/spots');
-    const spots = response.data.map((spot: any) => ({
-      id: spot._id,
-      title: spot.title,
-      description: spot.description,
-      coordinate: {
-        latitude: spot.latitude,
-        longitude: spot.longitude,
-      },
-      type: spot.type,
-      image: spot.image ? { uri: spot.image } : require('@/assets/images/map-pin.png'),
-      rating: spot.rating || 0,
-    }));
-    setHiddenSpots(spots);
-  } catch (error) {
-    console.error('Error fetching spots:', error);
-    // Optionally show error to user
-  }
-};
+    try {
+      const response = await axios.get('http://192.168.1.240:5000/api/spots');
+      const spots = response.data.map((spot: any) => ({
+        id: spot._id,
+        title: spot.title,
+        description: spot.description,
+        coordinate: {
+          latitude: spot.latitude,
+          longitude: spot.longitude,
+        },
+        type: spot.type,
+        image: spot.image ? { uri: spot.image } : require('@/assets/images/map-pin.png'),
+        rating: spot.rating || 0,
+      }));
+      setHiddenSpots(spots);
+    } catch (error) {
+      console.error('Error fetching spots:', error);
+    }
+  };
 
   useEffect(() => {
     fetchSpots();
   }, []);
 
-  // Clean up timer on unmount
-  React.useEffect(() => {
+  useEffect(() => {
     return () => {
       if (filterPressTimer.current) {
         clearTimeout(filterPressTimer.current);
@@ -342,7 +424,6 @@ const HomeScreen = () => {
     };
   }, []);
 
-  // Add this useEffect to handle sheetHeight changes
   useEffect(() => {
     if (showDetail) {
       Animated.spring(panY, {
@@ -354,7 +435,6 @@ const HomeScreen = () => {
     }
   }, [sheetHeight]);
 
-  // Get user's current location on mount
   useEffect(() => {
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
@@ -367,7 +447,6 @@ const HomeScreen = () => {
     })();
   }, []);
 
-  // Function to open directions in Google/Apple Maps
   const openDirections = (destination: { latitude: number; longitude: number }) => {
     if (!userLocation) {
       alert('Current location not available');
@@ -382,9 +461,132 @@ const HomeScreen = () => {
     Linking.openURL(url);
   };
 
-  // Use typed navigation
   const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
- 
+
+  const SearchFilterPanel = ({ 
+    filters, 
+    onApplyFilters,
+    onClose 
+  }: {
+    filters: typeof searchFilters,
+    onApplyFilters: (newFilters: typeof searchFilters) => void,
+    onClose: () => void
+  }) => {
+    const [localFilters, setLocalFilters] = useState(filters);
+    return (
+      <View style={styles.searchFilterPanel}>
+        <View style={styles.filterPanelHeader}>
+          <Text style={styles.filterPanelTitle}>Search Filters</Text>
+          <TouchableOpacity onPress={onClose}>
+            <Ionicons name="close" size={24} color="#666" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Minimum Rating</Text>
+          <View style={styles.ratingFilterContainer}>
+            {[1, 2, 3, 4, 5].map((star) => (
+              <TouchableOpacity
+                key={`rating-${star}`}
+                onPress={() => setLocalFilters(prev => ({
+                  ...prev,
+                  rating: prev.rating === star ? 0 : star
+                }))}
+              >
+                <Ionicons
+                  name={localFilters.rating >= star ? 'star' : 'star-outline'}
+                  size={28}
+                  color={localFilters.rating >= star ? '#FFD700' : '#ccc'}
+                />
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Spot Type</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10 }}>
+            {['lake', 'cafe', 'art', 'nature'].map(type => (
+              <TouchableOpacity
+                key={type}
+                style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16, marginBottom: 8 }}
+                onPress={() =>
+                  setLocalFilters(prev => ({
+                    ...prev,
+                    types: prev.types?.includes(type)
+                      ? prev.types.filter((t: string) => t !== type)
+                      : [...(prev.types || []), type],
+                  }))
+                }
+              >
+                <Ionicons
+                  name={localFilters.types?.includes(type) ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color="#6E45E2"
+                />
+                <Text style={{ marginLeft: 6, color: '#333', fontSize: 16 }}>
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+        
+        <View style={styles.filterSection}>
+          <View style={styles.sortOption}>
+            <Text style={styles.sortOptionText}>Has Gallery</Text>
+            <Switch
+              value={localFilters.hasGallery}
+              onValueChange={val => setLocalFilters(prev => ({ ...prev, hasGallery: val }))}
+              trackColor={{ false: "#ddd", true: "#6E45E2" }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+        <View style={styles.filterSection}>
+          <View style={styles.sortOption}>
+            <Text style={styles.sortOptionText}>Featured</Text>
+            <Switch
+              value={localFilters.featured}
+              onValueChange={val => setLocalFilters(prev => ({ ...prev, featured: val }))}
+              trackColor={{ false: "#ddd", true: "#6E45E2" }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+        <View style={styles.filterSection}>
+          <View style={styles.sortOption}>
+            <Text style={styles.sortOptionText}>Newest First</Text>
+            <Switch
+              value={localFilters.newestFirst}
+              onValueChange={(value) => setLocalFilters(prev => ({
+                ...prev,
+                newestFirst: value
+              }))}
+              trackColor={{ false: "#ddd", true: "#6E45E2" }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+        <TouchableOpacity 
+          style={styles.applyFilterButton}
+          onPress={() => {
+            onApplyFilters(localFilters);
+            onClose();
+          }}
+        >
+          <Text style={styles.applyFilterButtonText}>Apply Filters</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const filterActive = searchFilters.rating > 0 || searchFilters.types.length < 4 || searchFilters.minRatings > 0 || searchFilters.hasGallery || searchFilters.featured || searchFilters.newestFirst;
+
+  const [filteredSpots, setFilteredSpots] = useState<HiddenSpot[]>([]);
+
+  useEffect(() => {
+    handleSearch(searchQuery);
+  }, [searchFilters, searchQuery, hiddenSpots]);
+
   return (
     <View style={styles.container}>
       <MapView
@@ -399,7 +601,7 @@ const HomeScreen = () => {
         onPress={handleMapPress}
         onRegionChangeComplete={(region) => {
           setCurrentZoom(region.latitudeDelta);
-          fetchSpots(region); // <-- fetch spots on map refresh
+          fetchSpots(region);
         }}
       >
         {hiddenSpots
@@ -456,9 +658,113 @@ const HomeScreen = () => {
         <Text style={styles.headerTitle}>Hidden Gwalior</Text>
         <View style={styles.searchBar}>
           <Ionicons name="search" size={20} color="#999" />
-          <Text style={styles.searchText}>Find hidden spots...</Text>
+          <TextInput
+            ref={searchInputRef}
+            style={styles.searchInput}
+            placeholder="Find hidden spots..."
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={handleSearch}
+            onFocus={handleSearchFocus}
+            onBlur={handleSearchBlur}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
+          {searchQuery !== '' && (
+            <TouchableOpacity onPress={clearSearch} style={styles.searchClear}>
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity 
+            onPress={() => setShowSearchFilters(true)}
+            style={styles.filterButton}
+          >
+            <Ionicons 
+              name="options" 
+              size={20} 
+              color={filterActive ? '#6E45E2' : '#999'}
+            />
+          </TouchableOpacity>
         </View>
       </LinearGradient>
+
+      {(isSearchFocused || searchQuery !== '') && (
+        <Animated.View 
+          style={[
+            styles.searchResultsContainer,
+            {
+              opacity: searchAnim,
+              transform: [{
+                translateY: searchAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-10, 0]
+                })
+              }]
+            }
+          ]}
+        >
+          <ScrollView 
+            style={styles.searchResultsScroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            {searchQuery === '' && showRecentSearches && recentSearches.length > 0 && (
+              <>
+                <Text style={styles.recentSearchesTitle}>Recent Searches</Text>
+                {recentSearches.map((search, index) => (
+                  <TouchableOpacity
+                    key={`recent-${index}`}
+                    style={styles.searchResultItem}
+                    onPress={() => searchRecentQuery(search)}
+                  >
+                    <View style={styles.searchResultIcon}>
+                      <Ionicons name="time-outline" size={20} color="#6E45E2" />
+                    </View>
+                    <Text style={styles.searchResultTitle}>{search}</Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {searchQuery !== '' && filteredSpots.length > 0 ? (
+              filteredSpots.map(spot => (
+                <TouchableOpacity
+                  key={spot.id}
+                  style={styles.searchResultItem}
+                  onPress={() => {
+                    focusOnSpot(spot);
+                    addToRecentSearches(spot.title);
+                    clearSearch();
+                  }}
+                >
+                  <View style={styles.searchResultIcon}>
+                    <MaterialIcons 
+                      name={getMarkerIcon(spot.type)} 
+                      size={20} 
+                      color="#6E45E2" 
+                    />
+                  </View>
+                  <View style={styles.searchResultText}>
+                    <Text style={styles.searchResultTitle}>{spot.title}</Text>
+                    <Text 
+                      style={styles.searchResultDescription}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {spot.description}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            ) : searchQuery !== '' ? (
+              <View style={styles.noResults}>
+                <Ionicons name="search-outline" size={40} color="#ccc" />
+                <Text style={styles.noResultsText}>No spots found</Text>
+                <Text style={styles.noResultsSubText}>Try different keywords</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+        </Animated.View>
+      )}
 
       <View style={styles.zoomControls}>
         <TouchableOpacity 
@@ -481,63 +787,59 @@ const HomeScreen = () => {
       {fabVisible && (
         <View style={styles.fabContainer} pointerEvents="box-none">
           <Animated.View
-  style={[
-    styles.filterPanel,
-    {
-      opacity: filterOpacity,
-      transform: [{ scaleY: filterHeight }],
-      pointerEvents: showFilter ? 'auto' : 'none',
-    },
-  ]}
-  pointerEvents={showFilter ? 'auto' : 'none'}
->
-  <View style={styles.filterContent}>
-    <Text style={styles.filterTitle}>Filter by Type</Text>
-    {Object.keys(filterTypes).map((type) => (
-      <TouchableOpacity
-        key={type}
-        style={styles.filterItem}
-        onPress={() => {
-          // Set ignore map press when filter item is tapped
-          setIgnoreMapPress(true);
-          toggleType(type as keyof typeof filterTypes);
-          
-          // Clear any existing timer
-          if (filterPressTimer.current) {
-            clearTimeout(filterPressTimer.current);
-          }
-          
-          // Set timer to re-enable map press after a short delay
-          filterPressTimer.current = setTimeout(() => {
-            setIgnoreMapPress(false);
-          }, 300);
-        }}
-        activeOpacity={0.7}
-        onPressIn={() => setIgnoreMapPress(true)}
-        onPressOut={() => {
-          // Set timer to re-enable map press after a short delay
-          if (filterPressTimer.current) {
-            clearTimeout(filterPressTimer.current);
-          }
-          filterPressTimer.current = setTimeout(() => {
-            setIgnoreMapPress(false);
-          }, 300);
-        }}
-      >
-        <View style={styles.checkboxContainer}>
-          {filterTypes[type as keyof typeof filterTypes] ? (
-            <Ionicons name="checkbox" size={24} color="#6E45E2" />
-          ) : (
-            <Ionicons name="square-outline" size={24} color="#6E45E2" />
-          )}
-        </View>
-        <Text style={styles.filterItemText}>
-          {type.charAt(0).toUpperCase() + type.slice(1)}
-        </Text>
-      </TouchableOpacity>
-    ))}
-  </View>
-</Animated.View>
+            style={[
+              styles.filterPanel,
+              {
+                opacity: filterOpacity,
+                transform: [{ scaleY: filterHeight }],
+                pointerEvents: showFilter ? 'auto' : 'none',
+              },
+            ]}
+            pointerEvents={showFilter ? 'auto' : 'none'}
+          >
+            <View style={styles.filterContent}>
+              <Text style={styles.filterTitle}>Filter by Type</Text>
+              {Object.keys(filterTypes).map((type) => (
+                <TouchableOpacity
+                  key={type}
+                  style={styles.filterItem}
+                  onPress={() => {
+                    setIgnoreMapPress(true);
+                    toggleType(type as keyof typeof filterTypes);
+                    
+                    if (filterPressTimer.current) {
+                      clearTimeout(filterPressTimer.current);
+                    }
+                    
+                    filterPressTimer.current = setTimeout(() => {
+                      setIgnoreMapPress(false);
+                    }, 300);
+                  }}
+                  activeOpacity={0.7}
+                  onPressIn={() => setIgnoreMapPress(true)}
+                  onPressOut={() => {
+                    if (filterPressTimer.current) {
+                      clearTimeout(filterPressTimer.current);
+                    }
+                    filterPressTimer.current = setTimeout(() => {
+                      setIgnoreMapPress(false);
+                    }, 300);
+                  }}
+                >
+                  <View style={styles.checkboxContainer}>
+                    {filterTypes[type as keyof typeof filterTypes] ? (
+                      <Ionicons name="checkbox" size={24} color="#6E45E2" />
+                    ) : (
+                      <Ionicons name="square-outline" size={24} color="#6E45E2" />
+                    )}
+                  </View>
+                  <Text style={styles.filterItemText}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Animated.View>
 
           <TouchableOpacity 
             style={styles.fab}
@@ -571,7 +873,6 @@ const HomeScreen = () => {
 
           {selectedSpot && (
             <SpotDetail
-            //fix the type of selectedSpot
               spot={selectedSpot as HiddenSpot}
               expanded={expanded}
               onExpand={() => setExpanded(true)}
@@ -591,7 +892,16 @@ const HomeScreen = () => {
         </Animated.View>
       )}
 
-      
+      {showSearchFilters && (
+        <SearchFilterPanel
+          filters={searchFilters}
+          onApplyFilters={(newFilters) => {
+            setSearchFilters(newFilters);
+            handleSearch(searchQuery);
+          }}
+          onClose={() => setShowSearchFilters(false)}
+        />
+      )}
     </View>
   );
 };
@@ -599,7 +909,7 @@ const HomeScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0f0f0', // changed to light grey
+    backgroundColor: '#f0f0f0',
   },
   map: {
     width: '100%',
@@ -610,10 +920,10 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    paddingTop: 50,
+    paddingTop: Platform.OS === 'ios' ? 50 : 30,
     paddingHorizontal: 20,
     paddingBottom: 15,
-    zIndex: 0
+    zIndex: 10
   },
   headerTitle: {
     color: 'white',
@@ -624,20 +934,104 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#eee', // changed to grey
+    backgroundColor: 'white',
     borderRadius: 10,
     paddingHorizontal: 15,
-    paddingVertical: 12,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3
   },
-  searchText: {
+  searchInput: {
+    flex: 1,
     marginLeft: 10,
+    color: '#333',
+    fontSize: 16,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    paddingRight: 30,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 5,
+    
+    height: Platform.OS === 'ios' ? 30 : 40,
+  },
+  searchClear: {
+    marginLeft: 10,
+    padding: 4,
+  },
+  searchResultsContainer: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 140 : 120,
+    left: 20,
+    right: 20,
+    marginTop: 40,
+    maxHeight: height * 0.5,
+    backgroundColor: 'white',
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    zIndex: 100,
+  },
+  searchResultsScroll: {
+    maxHeight: height * 0.5,
+  },
+  recentSearchesTitle: {
+    padding: 15,
+    paddingBottom: 5,
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '600'
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  searchResultIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  searchResultText: {
+    flex: 1,
+  },
+  searchResultTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  searchResultDescription: {
+    fontSize: 14,
+    color: '#666',
+  },
+  noResults: {
+    padding: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noResultsText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 10,
+  },
+  noResultsSubText: {
+    fontSize: 14,
     color: '#999',
-    fontSize: 16
+    marginTop: 5,
   },
   markerWrapper: {
     alignItems: 'center',
@@ -660,7 +1054,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#f7f7f7', // changed to a lighter grey
+    backgroundColor: '#f7f7f7',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -679,73 +1073,40 @@ const styles = StyleSheet.create({
   sheetHandle: {
     width: 40,
     height: 5,
-    backgroundColor: '#bbb', // changed to grey
+    backgroundColor: '#bbb',
     borderRadius: 3,
   },
-  spotImage: {
-    width: '100%',
-    height: 150,
-    borderRadius: 15,
-    marginBottom: 15
+  zoomControls: {
+    position: 'absolute',
+    right: 44,
+    bottom: height * 0.13,
+    backgroundColor: '#eee',
+    borderRadius: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    overflow: 'hidden',
   },
-  spotContent: {
-    paddingHorizontal: 5
-  },
-  spotHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10
-  },
-  spotTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#333'
-  },
-  rating: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10
-  },
-  ratingText: {
-    marginLeft: 5,
-    fontWeight: '600'
-  },
-  spotDescription: {
-    color: '#666',
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 20
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between'
-  },
-  saveButton: {
+  zoomButton: {
     width: 50,
     height: 50,
-    borderRadius: 25,
-    backgroundColor: '#6E45E2',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  directionButton: {
-    flex: 1,
-    marginLeft: 15,
-    backgroundColor: '#4285F4',
-    borderRadius: 25,
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20
+    alignItems: 'center',
+    backgroundColor: '#eee',
   },
-  directionText: {
-    color: 'white',
-    fontWeight: '600',
-    marginRight: 10
+  zoomDivider: {
+    height: 1,
+    width: '100%',
+    backgroundColor: '#ccc',
+  },
+  fabContainer: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    alignItems: 'flex-end',
+    zIndex: 10,
   },
   fab: {
     position: 'absolute',
@@ -763,44 +1124,12 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 5
   },
-  zoomControls: {
-    position: 'absolute',
-    right: 44,
-    bottom: height * 0.13,
-    backgroundColor: '#eee', // changed to grey
-    borderRadius: 25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
-    overflow: 'hidden',
-  },
-  zoomButton: {
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#eee', // changed to grey
-  },
-  zoomDivider: {
-    height: 1,
-    width: '100%',
-    backgroundColor: '#ccc', // changed to grey
-  },
-  fabContainer: {
-    position: 'absolute',
-    right: 20,
-    bottom: 20,
-    alignItems: 'flex-end',
-    zIndex: 10,
-  },
   filterPanel: {
     position: 'absolute',
     right: 10,
     bottom: 90,
     width: 180,
-    backgroundColor: '#f7f7f7', // changed to light grey
+    backgroundColor: '#f7f7f7',
     borderRadius: 15,
     padding: 15,
     zIndex: 10,
@@ -842,57 +1171,85 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  coordinateContainer: {
-    marginTop: 15,
-    padding: 12,
-    backgroundColor: '#ededed', // changed to grey
-    borderRadius: 8,
+  searchFilterPanel: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 140 : 120,
+    marginTop:40,
+    left: 20,
+    right: 20,
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 15,
+    zIndex: 1000,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
-  coordinateHeader: {
+  filterPanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 15,
   },
-  coordinateTitle: {
+  filterPanelTitle: {
+    fontSize: 18,
     fontWeight: '600',
     color: '#333',
   },
-  coordinateRow: {
-    flexDirection: 'row',
-    marginBottom: 4,
+  filterSection: {
+    marginBottom: 20,
   },
-  coordinateLabel: {
+  filterSectionTitle: {
+    fontSize: 16,
     fontWeight: '500',
-    width: 80,
     color: '#666',
+    marginBottom: 10,
   },
-  coordinateValue: {
-    flex: 1,
-    color: '#333',
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-  copyButton: {
-    backgroundColor: '#888', // changed to grey
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-  },
-  copyButtonText: {
-    color: 'white',
-    fontWeight: '500',
-    fontSize: 14,
-  },
-  detailsButton: {
-    flex: 1,
-    marginRight: 0,
-    backgroundColor: '#25d1f7',
-    borderRadius: 25,
+  ratingFilterContainer: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+  },
+  distanceFilterContainer: {
+    paddingHorizontal: 10,
+  },
+  distanceText: {
+    textAlign: 'center',
+    fontSize: 16,
+    marginBottom: 10,
+    color: '#333',
+  },
+  distanceSlider: {
+    width: '100%',
+    height: 40,
+  },
+  sortOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    height: 50,
+    paddingHorizontal: 10,
+  },
+  sortOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  applyFilterButton: {
+    backgroundColor: '#6E45E2',
+    borderRadius: 25,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  applyFilterButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  filterButton: {
+    marginLeft: 10,
+    padding: 4,
   },
 });
 
